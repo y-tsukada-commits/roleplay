@@ -706,7 +706,7 @@ function openKey(){
 window.renderKeyFields=()=>{
   const p=document.getElementById('m_provider').value;
   const models=p==='gemini'
-    ?[['gemini-2.5-flash','gemini-2.5-flash（無料枠・推奨）'],['gemini-2.5-flash-lite','gemini-2.5-flash-lite（無料枠・最速）']]
+    ?[['gemini-2.5-pro','gemini-2.5-pro（高精度・やや有料）'],['gemini-2.5-flash','gemini-2.5-flash（無料枠・推奨）'],['gemini-2.5-flash-lite','gemini-2.5-flash-lite（無料枠・最速）']]
     :[['claude-sonnet-4-6','claude-sonnet-4-6（バランス）'],['claude-haiku-4-5-20251001','claude-haiku-4-5（低コスト）'],['claude-opus-4-8','claude-opus-4-8（最高品質）']];
   const help=p==='gemini'
     ?'無料キーは <b>aistudio.google.com/apikey</b> で取得。カード不要・1日1,500回まで無料。※無料枠は入力内容が学習に使われるため、架空のロープレ用データでご利用ください。'
