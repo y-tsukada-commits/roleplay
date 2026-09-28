@@ -92,7 +92,7 @@
     <button id="authBtn" style="width:100%;background:#1F7A8C;color:#fff;border:0;border-radius:10px;padding:11px;font-size:15px;font-weight:600;cursor:pointer">入る</button>
   </div>
 </div>
-<header
+<header>
   <span class="logo">🎙 AIロープレ研修</span>
   <nav>
     <button data-view="rp" class="active">ロールプレイ</button>
@@ -485,24 +485,30 @@ document.getElementById('rpEval').onclick=async()=>{
     convo.push({role:'assistant',content:out});
     setStatus('レーダーチャートを作成しています…');
     let radar=[]; try{radar=await scoreRadarFrom(evalConvo);}catch(err){radar=[];}
-    // 総合点：レーダーの項目点（達成度×配点）から算出。失敗時のみ本文の「総合点数」を使用
+    // 総合点：各項目の「獲得点（達成度×配点）」の合計。各項目にも r.earned（獲得点）・r.max（配点）を持たせ、合計＝総合点に必ず一致させる。
     let total=0;
     const _rub=(currentScn.rubric||[]).filter(c=>c&&c.t);
     const _maxs=_rub.map(c=>{const mm=(c.t||'').match(/（\s*(\d+)\s*点\s*）/)||(c.t||'').match(/\(\s*(\d+)\s*点\s*\)/);return mm?parseInt(mm[1]):null;});
     const _sumMax=_maxs.reduce((a,b)=>a+(b||0),0);
-    if(radar.length&&_maxs.every(x=>x!=null)&&_sumMax>0){
-      let _sum=0; radar.forEach((r,i)=>{_sum+=((r.score||0)/100)*(_maxs[i]||0);});
-      total=Math.round(_sum*100/_sumMax);
-    }else if(radar.length){
-      total=Math.round(radar.reduce((a,r)=>a+(r.score||0),0)/radar.length);
-    }else{
-      const m=out.match(/総合点数[^0-9]{0,6}([0-9]{1,3})/); total=m?Math.min(100,parseInt(m[1])):0;
-    }
     // 会話量による上限：極端に短い接客は、AIが甘めでも高得点にしない（接客が成立していないため）
     const _staffTurns=evalConvo.filter(x=>x.role==='user'&&x.content!=='いらっしゃいませ！').length;
     let _cap=100;
     if(_staffTurns<=1)_cap=12; else if(_staffTurns<=2)_cap=28; else if(_staffTurns<=3)_cap=45; else if(_staffTurns<=4)_cap=60;
-    if(total>_cap)total=_cap;
+    if(radar.length){
+      // 各項目の配点（合計100になるよう正規化）。配点が読めない場合は均等配点。
+      const _valid=_maxs.every(x=>x!=null)&&_sumMax>0;
+      const _scale=_valid?(100/_sumMax):1;
+      const _maxN=radar.map((r,i)=>_valid?(_maxs[i]*_scale):(100/radar.length));
+      // 獲得点（配点ベース）
+      let _earned=radar.map((r,i)=>((r.score||0)/100)*_maxN[i]);
+      let _raw=_earned.reduce((a,b)=>a+b,0);
+      const _cf=(_raw>_cap&&_raw>0)?(_cap/_raw):1; // 上限を超える分だけ全項目を比例縮小
+      radar.forEach((r,i)=>{ r.max=Math.round(_maxN[i]); r.earned=Math.max(0,Math.round(_earned[i]*_cf)); });
+      total=radar.reduce((a,r)=>a+(r.earned||0),0); // 合計＝各項目獲得点の総和（必ず一致）
+    }else{
+      const m=out.match(/総合点数[^0-9]{0,6}([0-9]{1,3})/); total=m?Math.min(100,parseInt(m[1])):0;
+      if(total>_cap)total=_cap;
+    }
     // 総合点は上で算出した total を唯一の正とし、本文中の「総合点数：〇〇点」も必ずこの数字に揃える（表示・保存・スプシのズレ防止）
     const _totRe=/総合点数[：: 　]*\d{1,3}\s*点/;
     out = _totRe.test(out) ? out.replace(_totRe,'総合点数：'+total+'点') : ('【管理用データ】\n総合点数：'+total+'点\n\n'+out);
@@ -620,7 +626,7 @@ function openResult(r){
     <p class="muted">${esc(r.learner)} ／ ${esc(r.scenarioTitle)} ／ ${new Date(r.date).toLocaleString('ja-JP')} ／ ${r.turns}往復</p>
     <div style="margin:8px 0"><span style="font-size:34px;font-weight:700;color:var(--accent)">${r.total}</span><span style="font-size:16px;color:var(--sub)">点</span> <span class="pill ${cls}">${j}</span></div>
     ${hasRadar?'<div style="max-width:420px;margin:6px auto 14px"><canvas id="radarCanvas"></canvas></div>':(r.radar&&r.radar.length?'<p class="muted">※ レーダーチャートの表示にはインターネット接続が必要です。</p>':'')}
-    ${(r.radar&&r.radar.length)?'<div style="margin:4px 0 12px">'+r.radar.map(x=>`<div class="crit"><div class="row" style="justify-content:space-between;gap:8px"><span class="t">${esc(x.name)}</span><b>${x.score}点</b></div>${x.desc?`<div class="muted" style="margin-top:3px">こう話すと良い：${esc(x.desc)}</div>`:''}</div>`).join('')+'</div>':''}
+    ${(r.radar&&r.radar.length)?'<div style="margin:4px 0 12px">'+r.radar.map(x=>{const sc=(x.earned!=null&&x.max!=null)?`<b>${x.earned}</b><span style="color:var(--sub)"> / ${x.max}点</span>`:`<b>${x.score}点</b>`;return `<div class="crit"><div class="row" style="justify-content:space-between;gap:8px"><span class="t">${esc(x.name)}</span><span>${sc}</span></div>${x.desc?`<div class="muted" style="margin-top:3px">こう話すと良い：${esc(x.desc)}</div>`:''}</div>`;}).join('')+`<div class="muted" style="text-align:right;margin-top:2px">各項目の獲得点の合計 ＝ 総合点 ${r.total}点</div>`+'</div>':''}
     <div class="feedback">${esc(r.summary)}</div>
     <div class="row" style="justify-content:flex-end;margin-top:16px"><button class="primary" onclick="closeModal('resModal')">閉じる</button></div>`;
   show('resModal');
