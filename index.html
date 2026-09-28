@@ -498,6 +498,11 @@ document.getElementById('rpEval').onclick=async()=>{
     }else{
       const m=out.match(/総合点数[^0-9]{0,6}([0-9]{1,3})/); total=m?Math.min(100,parseInt(m[1])):0;
     }
+    // 会話量による上限：極端に短い接客は、AIが甘めでも高得点にしない（接客が成立していないため）
+    const _staffTurns=evalConvo.filter(x=>x.role==='user'&&x.content!=='いらっしゃいませ！').length;
+    let _cap=100;
+    if(_staffTurns<=1)_cap=12; else if(_staffTurns<=2)_cap=28; else if(_staffTurns<=3)_cap=45; else if(_staffTurns<=4)_cap=60;
+    if(total>_cap)total=_cap;
     // 総合点は上で算出した total を唯一の正とし、本文中の「総合点数：〇〇点」も必ずこの数字に揃える（表示・保存・スプシのズレ防止）
     const _totRe=/総合点数[：: 　]*\d{1,3}\s*点/;
     out = _totRe.test(out) ? out.replace(_totRe,'総合点数：'+total+'点') : ('【管理用データ】\n総合点数：'+total+'点\n\n'+out);
@@ -668,9 +673,26 @@ async function scoreRadarFrom(conv){
   if(!rub.length)return [];
   const items=rub.map(c=>cleanLabel(c.t));
   const itemsDetail=rub.map(c=>'■'+cleanLabel(c.t)+(c.d?'：'+c.d:'')).join('\n');
+  const staffMsgs=conv.filter(m=>m.role==='user'&&m.content!=='いらっしゃいませ！'&&m.content!=='ロープレを終了します');
+  const staffTurns=staffMsgs.length;
   const transcript=conv.filter(m=>m.content!=='いらっしゃいませ！'&&m.content!=='ロープレを終了します').map(m=>(m.role==='assistant'?'お客様':'店員')+'：'+m.content).join('\n');
-  const sys='あなたは買取専門店エコリングの厳しい接客評価者です。次の会話について、各評価項目の達成度を0〜100の整数で厳しく採点してください。\n\n'+STT_GUIDE+'\n\n【採点方針】接客行動が会話に明確に表れている場合のみ高得点とし、未実施・曖昧・テスト的な発言・挨拶のみ・極端に短い場合は0〜20点にすること。甘い評価はしない。評価するのは店員の接客のみ。音声認識の誤変換（お蕎麦＝相場など）は絶対に減点材料にせず、買取接客の文脈に補正した内容で評価すること。\n\n【各項目の採点基準（この説明に厳密に沿って0〜100で採点）】\n'+itemsDetail+'\n\n必ず次のJSONのみを出力し前後に文章を付けないこと：{"scores":[{"name":"項目名","score":整数}]}\n項目名は次を正確に使う：'+items.join(' / ');
-  let out=await callClaude(sys,[{role:'user',content:transcript}],700);
+  const sys='あなたは買取専門店エコリングの、非常に厳格な接客評価者です。各評価項目を0〜100の整数で採点します。\n\n'+STT_GUIDE+
+  '\n\n【採点の大原則（厳守・減点方式）】'+
+  '\n・全項目0点スタート。その項目の接客行動が、この会話の中で「実際に」「具体的な発言として」「お客様に伝わる形で」行われたことが確認できた分だけ加点する。'+
+  '\n・会話に存在しない行動には一切加点しない。「丁寧そう」「やれそう」「これからやりそう」「印象が良い」等の期待・雰囲気では絶対に加点しない。実在する発言の事実だけを根拠にする。'+
+  '\n・その項目に該当する接客が「行われていない／確認できない」場合は0点。少しやりかけただけ・言葉だけ・不十分なら1〜20点。'+
+  '\n・挨拶、相づち、「確認します」、一言のヒアリング（例：どれくらい使いましたか）だけでは、どの項目も20点を超えさせない。'+
+  '\n・その項目が「はっきり・具体的に・効果的に」実施され、お客様の反応でも成立が確認できる場合のみ60点以上。文句なしに完璧な場合のみ90点以上。'+
+  '\n・迷ったら低い方に振る（疑わしきは加点しない）。全体に甘くしない。'+
+  '\n・評価対象は店員の発言のみ。お客様（AI側）の発言は評価しない。'+
+  '\n・音声認識の誤変換（お蕎麦＝相場など）は減点材料にせず、買取接客の文脈に補正した内容で評価する。'+
+  '\n\n【この会話の情報】店員の発言回数：'+staffTurns+'回（挨拶・終了合図を除く）。'+
+  (staffTurns<=2?'発言が極端に少なく、接客はほとんど成立していない。ほぼ全項目が0〜15点になるはず。査定額の提示・根拠説明・提案・案内などの中身が無ければ該当項目は0点。':
+   staffTurns<=4?'発言が少なく、接客は途中段階。実施が確認できた項目だけに限定的に加点し、未実施の項目は0点にする。':
+   '発言量は十分。ただし量ではなく、各項目の中身が実際に伴っているかで厳しく判定する。')+
+  '\n\n【各項目の採点基準（この説明に厳密に沿って0〜100で採点）】\n'+itemsDetail+
+  '\n\n必ず次のJSONのみを出力し前後に文章を付けないこと：{"scores":[{"name":"項目名","score":整数}]}\n項目名は次を正確に使う：'+items.join(' / ');
+  let out=await callClaude(sys,[{role:'user',content:transcript||'（店員の発言なし）'}],700);
   out=out.replace(/```json|```/g,'').trim();
   const j=JSON.parse(out);
   return rub.map(c=>{const nm=cleanLabel(c.t);const f=(j.scores||[]).find(s=>cleanLabel(s.name)===nm);return {name:nm,score:f?Math.max(0,Math.min(100,Math.round(f.score))):0,desc:c.d||''};});
