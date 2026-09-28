@@ -481,7 +481,7 @@ document.getElementById('rpEval').onclick=async()=>{
   try{
     const evalConvo=convo.slice();
     convo.push({role:'user',content:'ロープレを終了します'});
-    const out=await callClaude(sysPrompt()+'\n\n'+EVAL_GUIDE,convo,2200);
+    let out=await callClaude(sysPrompt()+'\n\n'+EVAL_GUIDE,convo,2200);
     convo.push({role:'assistant',content:out});
     setStatus('レーダーチャートを作成しています…');
     let radar=[]; try{radar=await scoreRadarFrom(evalConvo);}catch(err){radar=[];}
