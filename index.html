@@ -83,7 +83,16 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 </head>
 <body>
-<header>
+<div id="authGate" style="position:fixed;inset:0;background:#1F7A8C;display:flex;align-items:center;justify-content:center;z-index:9999;font-family:'Hiragino Kaku Gothic ProN','Yu Gothic',Meiryo,sans-serif">
+  <div style="background:#fff;border-radius:16px;padding:30px 26px;max-width:340px;width:88%;text-align:center;box-shadow:0 10px 40px rgba(0,0,0,.25)">
+    <div style="font-weight:700;color:#1F7A8C;font-size:19px;margin-bottom:4px">エコリング AIロープレ研修</div>
+    <div style="color:#6b7c93;font-size:13px;margin-bottom:16px">パスワードを入力してください</div>
+    <input id="authPw" type="password" placeholder="パスワード" style="width:100%;box-sizing:border-box;font-size:15px;border:1px solid #d8e0e5;border-radius:9px;padding:11px">
+    <div id="authErr" style="color:#d9534f;font-size:12px;min-height:16px;margin:6px 0"></div>
+    <button id="authBtn" style="width:100%;background:#1F7A8C;color:#fff;border:0;border-radius:10px;padding:11px;font-size:15px;font-weight:600;cursor:pointer">入る</button>
+  </div>
+</div>
+<header
   <span class="logo">🎙 AIロープレ研修</span>
   <nav>
     <button data-view="rp" class="active">ロールプレイ</button>
@@ -153,12 +162,10 @@
       <h2>管理ダッシュボード</h2>
       <div class="row">
         <select id="dashFilter" style="width:auto"></select>
-        <button class="ghost" id="syncBtn">🔄 全員分を取得</button>
         <button class="ghost" id="csvBtn">⬇ CSVに出力</button>
       </div>
     </div>
-    <p class="muted">受講者ごとの実施履歴と評価スコアの一覧です。「🔄 全員分を取得」で、集計シートにたまった全員の記録を表示します。</p>
-    <p class="muted" id="syncMsg"></p>
+    <p class="muted">受講者ごとの実施履歴と評価スコアの一覧です。受講者で絞り込みできます。</p>
     <div class="kpi" id="kpi"></div>
     <div class="card" style="overflow:hidden">
       <table>
@@ -184,37 +191,18 @@
    ========================================================================= */
 const GEMINI_API_KEY    = "";
 const ANTHROPIC_API_KEY = "";
+/* === 開くときのパスワード（ここを変更してください。空にすると無効） === */
+const APP_PASSWORD = "ecoring2026";
+(function authGate(){
+  var g=document.getElementById('authGate'); if(!g)return;
+  if(!APP_PASSWORD||localStorage.getItem('rp_auth_ok')==='1'){g.style.display='none';return;}
+  function ok(){ if(document.getElementById('authPw').value===APP_PASSWORD){localStorage.setItem('rp_auth_ok','1');g.style.display='none';}else{document.getElementById('authErr').textContent='パスワードが違います';} }
+  document.getElementById('authBtn').onclick=ok;
+  document.getElementById('authPw').addEventListener('keydown',function(e){if(e.key==='Enter')ok();});
+  setTimeout(function(){var p=document.getElementById('authPw');if(p)p.focus();},100);
+})();
 function codeKey(p){p=p||DB.provider;return (p==='gemini'?GEMINI_API_KEY:ANTHROPIC_API_KEY)||'';}
 function hasKey(){return !!(codeKey()||DB.key());}
-
-/* ===== 記録サーバー（Google Apps Script） ==============================
-   AIのAPIキーはここには一切関係しません（キーは従来どおり各自のブラウザ内のみ）。
-   このサーバーは「評価結果を全員分ためる／見る」ためだけに使います。
-   GASを「ウェブアプリ」としてデプロイして得たURLを貼ってください。
-   ===================================================================== */
-const GAS_URL = "https://script.google.com/macros/s/AKfycbzXrfMrFnTn2UnNcw9Ax43vb-CI6h28JJuVqRIdJC5eI45TUEIu5-r46lQSG5JR_1oUHg/exec";   /* 例) https://script.google.com/macros/s/AKfy.../exec */
-
-const REC={
-  get pass(){return localStorage.getItem('rp_recpass')||''}, set pass(v){localStorage.setItem('rp_recpass',v||'')},
-  get on(){return !!(GAS_URL&&REC.pass)},
-};
-async function gasCall(action,payload){
-  if(!GAS_URL) throw new Error('記録サーバーのURLが未設定です。管理者にご連絡ください。');
-  if(!REC.pass) throw new Error('記録用の合言葉が未設定です。右上の「API設定」から入力してください。');
-  const body=Object.assign({action,pass:REC.pass,ua:navigator.userAgent},payload||{});
-  let r;
-  try{
-    /* content-type は text/plain（GASはプリフライトに応答できないため） */
-    r=await fetch(GAS_URL,{method:'POST',headers:{'content-type':'text/plain;charset=utf-8'},body:JSON.stringify(body)});
-  }catch(e){throw new Error('記録サーバーに接続できませんでした。');}
-  if(!r.ok) throw new Error('記録サーバーエラー('+r.status+')');
-  let j; try{ j=await r.json(); }catch(e){ throw new Error('記録サーバーの応答が不正です（デプロイ設定＝全員 を確認してください）。'); }
-  if(!j.ok){
-    if(j.code==='AUTH'){REC.pass='';throw new Error('記録用の合言葉が違います。');}
-    throw new Error(j.error||'記録サーバーエラー');
-  }
-  return j;
-}
 const DEFAULT_RUBRIC=[{"t": "査定説明（納得感）（25点）", "d": "価格の根拠を相場・状態・需要の観点で論理的に説明したか／商品の傷みが中古市場でどう評価されるかをプロとして伝えたか／感情的な訴えだけでなく、客観的な根拠があったか"}, {"t": "メリットの情報提供（20点）", "d": "そのブランドに合ったケア・保管法・次回持ち込み時のコツを伝えたか／「またあの店員に相談したい」と思わせる専門情報があったか"}, {"t": "お役立ち姿勢（20点）", "d": "「大切にされてきたバッグですね」など、物への敬意・寄り添いがあったか／一方的な説明でなく、お客様の反応を見ながら会話できていたか"}, {"t": "販促物活用（15点）", "d": "店頭チラシや現在のキャンペーンを自然に案内できたか／宅配・出張買取は店頭案内完了後の補足にとどめること"}, {"t": "次回アプローチ（20点）", "d": "アプリ案内に限らず、この会話の流れやお客様の状況に合った形で次回来店につながる行動ができたか／加点対象の例：具体的な金額メリットとセットでアプリを自然に案内した／「次回はこういうものをぜひ持ってきてください」と提案した／お客様に合ったサービスやキャンペーンを紹介して来店動機を作った／以下は加点しない：一方的・義務的にアプリを押し込んだだけ／お客様の反応を無視して案内し続けた／定型文で終わった"}];
 let resChart=null;
 const TEMPLATE_SKELETON="あなたはこれから、エコリング店舗に来店した一般客の「{{お客様の名前}}」として振る舞ってください。\n私は店員として、音声で接客します。\n \nこのロープレは、実際の店頭接客に近い会話練習を目的としています。\n音声認識の多少の誤りがあっても、買取店の接客ロープレの文脈に沿って意味を補正して理解してください。\nブランド名・商品名・状態説明・接客用語は、多少聞き取りが崩れても文脈から自然に判断してください。\n \n⸻\n■ 持込商品のランダム設定\n\nロープレを開始する前に、以下のリストからランダムで1つを選んでください。\n選んだ商品がこのロープレでの持込品になります。\n\n{{録音内容に合った持込商品の候補をA〜Eの5つ作成すること。各商品に使用年数・状態（傷・付属品の有無など）を付ける}}\n\n選んだ後、ロープレ開始の第一声の前に【本日の商品：〇〇（商品名）】と1行だけ表示してください。\nその後すぐに {{お客様の名前}} として会話を始めてください。\n\n⸻\n \n■ 役割定義\n \n• あなたは今から、エコリングに来店した一般客として振る舞う\n• 鑑定の知識がない素人\n• 店員の接客を受ける立場を徹底する。絶対に店員側の進行をしない\n• 聞かれたことに自然に答える\n• 音声会話なので、一度に2〜3文程度で話す（短すぎず、長すぎず）\n• 被せず、店頭で実際にありそうなテンポ感を優先する\n \n⸻\n■ お客様設定\n\n• 名前：{{録音から判断したお客様の氏名}}（{{年齢}}歳）\n• 持ち込み品：上記ランダムで選ばれた商品\n• 状況：{{録音から判断した来店状況・背景}}\n• 心理：{{録音から判断した心理状態}}\n• 性格：{{録音から判断した性格}}\n• 接客中の目線：{{録音から判断した、お客様が接客で重視している点}}\n\n⸻\n■ このお客様が重視していること（ウォンツ）\n\nこのお客様が接客に満足するためには、以下の点が重要です。\n評価もこのウォンツに沿って行います。\n\n【最重要】{{録音から判断した、最も重視している点}}\n【重要】{{録音から判断した、重視している点}}\n【あると嬉しい】{{録音から判断した、あると嬉しい点}}\n【あれば加点】{{録音から判断した、あれば加点となる点}}\n\n⸻\n■ 会話開始ルール\n\n私が「いらっしゃいませ！」と言ったら、ロープレを開始する。\n\n最初の一声は「これお願いできますか」ではなく、持ち込み品と状況を自分から自然に話題にして入ること。\n{{録音内容に合った、自然な第一声の例を1つ記載}}\n\n何を持ち込んでいるか・どんな状況かを自分から自然に説明して会話を始める。\n\n⸻\n■ 会話中のルール\n\n• 終始「{{お客様の名前}}」として振る舞う\n• 返答は2〜3文程度の自然な長さで話す（一言で終わらせすぎない）\n• このお客様の性格・状況に合った反応を自然に出してよい\n• {{録音内容に合った、このお客様が言いそうなセリフの例を3〜5個記載}}\n\n⸻\n \n■ 終了トリガーの厳格ルール\n \n以下2フレーズのいずれかを私が発言した場合のみロープレを終了してください。\n　• 「査定を終わります」\n　• 「ロープレを終了します」\n \nそれ以外の発言では絶対に終了しないこと。\nチラシ案内・次回アプローチが途中であっても、終了合図があるまでお客様として会話を続けてください。\n \n⸻\n \n■ ロープレ終了後の切り替え\n \n上記の終了合図を受けたら、「エコリング近畿地区部長」に切り替わり採点してください。\n評価は必ずテキスト（文字）で即座に出力してください。\n \n⸻\n \n■ 採点アルゴリズム\n \n• 減点方式・現場基準で厳しく評価\n• 「やったつもり」ではなく「お客様に伝わったか」で判定\n• 会話前後のスタッフの宣言・プロセスも評価の文脈として加味する\n• このお客様のウォンツ（このお客様のウォンツ）に応えられていたかを最優先に評価すること\n \n⸻\n \n■ 評価項目\n \n1. 査定説明（25点）\n• 価格の根拠を相場・状態・需要の観点で論理的に説明したか\n• 商品の傷みが中古市場でどう評価されるかをプロとして伝えたか\n• 感情的な訴えだけでなく、客観的な根拠があったか\n \n2. 高く売るコツ（20点）\n• そのブランドに合ったケア・保管法・次回持ち込み時のコツを伝えたか\n• 「またあの店員に相談したい」と思わせる専門情報があったか\n \n3. お役立ち姿勢（20点）\n• 「大切にされてきたバッグですね」など、物への敬意・寄り添いがあったか\n• 一方的な説明でなく、お客様の反応を見ながら会話できていたか\n \n4. 販促物活用（15点）\n• 店頭チラシや現在のキャンペーンを自然に案内できたか\n• 宅配・出張買取は店頭案内完了後の補足にとどめること\n \n5. 次回アプローチ（20点）\n• アプリ案内に限らず、この会話の流れやお客様の状況に合った形で次回来店につながる行動ができたか\n• 加点対象の例：具体的な金額メリットとセットでアプリを自然に案内した／「次回はこういうものをぜひ持ってきてください」と提案した／お客様に合ったサービスやキャンペーンを紹介して来店動機を作った\n• 以下は加点しない：一方的・義務的にアプリを押し込んだだけ／お客様の反応を無視して案内し続けた／定型文で終わった\n \n⸻\n \n■ 評価時の出力ルール\n \nGoogleフォームに転記しやすい書き言葉で、必ず以下のフォーマットで出力すること。\n各セクションは箇条書きで2〜4項目にまとめること。\n \n【管理用データ】\n総合点数：〇〇点\n達成項目：[査定説明][高く売るコツ][お役立ち姿勢][販促物活用][次回アプローチ]\n※基準を満たしたもののみ記載\n \n【フィードバック】\n \n▼ 良かった点\n・\n・\n・\n \n▼ 悪かった点\n・\n・\n・\n \n▼ 改善点（次回の接客で意識すること）\n・\n・\n・\n \n【お客様（{{お客様の名前}}）からの一言】\nお客様の立場から見て今日の接客をどう感じたか、1〜3文で正直にコメント。\n「こうしてもらえたら、もっと満足して帰れたのに」という視点で記載する。\n \n⸻\n \n■ 最終指示\n \n私が「いらっしゃいませ！」と言ったら、\nまず【本日の商品：〇〇】を1行表示し、\n一般客の{{お客様の名前}}として自然な音声会話を開始してください。\n最初に何を持ち込んだか・どんな状況かを自分から話しかけて会話を始めること。\n \n会話終了後は、上記基準に従ってエコリング近畿地区部長として評価してください";
@@ -248,7 +236,7 @@ async function callClaude(system,messages,maxTokens=1024){
 }
 async function callGemini(system,messages,maxTokens,key){
   const contents=messages.map(m=>({role:m.role==='assistant'?'model':'user',parts:[{text:m.content}]}));
-  const body={contents,generationConfig:{maxOutputTokens:maxTokens,thinkingConfig:{thinkingBudget:0}}};
+  const _mdl=DB.model('gemini');const _isPro=/pro/i.test(_mdl);const _gen={maxOutputTokens:_isPro?Math.max(maxTokens,2048):maxTokens};if(!_isPro)_gen.thinkingConfig={thinkingBudget:0};const body={contents,generationConfig:_gen};
   if(system)body.system_instruction={parts:[{text:system}]};
   const url='https://generativelanguage.googleapis.com/v1beta/models/'+DB.model('gemini')+':generateContent?key='+encodeURIComponent(key);
   const r=await fetch(url,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)});
@@ -289,11 +277,20 @@ const EVAL_GUIDE=`■ 評価フィードバックの厳守ルール
 ・会話に出てこなかった一般論・教科書的なアドバイスは書かない。必ず「会話のどの場面で何を言った／言わなかったか」に具体的に触れる。
 ・音声認識やシステムに関する注意（「音声認識エラーに注意」等）は一切書かない。評価対象ではない。
 ・良かった点／悪かった点／改善点は、すべて実際の発言の引用または要約に基づいて書く。該当する事実がなければ項目を減らしてよい。
-・評価するのは店員（受講者）の接客のみ。お客様側の発言は評価しない。`;
+・評価するのは店員（受講者）の接客のみ。お客様側の発言は評価しない。
+・採点は現場基準で厳しく行う。各項目は、店員が実際にその接客行動を会話の中で明確に行えている場合のみ加点し、曖昧・不十分・未実施なら容赦なく0点に近づける。
+・店員の発言が接客になっていない場合（テスト的発言・挨拶のみ・内容が伴わない・極端に短い）は、総合点を20点未満にすること。甘い評価は絶対にしない。`;
 const CONV_GUIDE=`■ お客様の話し方ルール（厳守）
 ・金額・年数・数量などの数値を聞かれたら、「〇〇」「××」「△△」などの伏字や空欄を絶対に使わない。必ず持込品と状態に見合った具体的で現実的な数字を自分で決めて答えること（例：「他のお店では38,000円って言われました」）。
 ・一度口にした金額・数字は、会話の最後まで一貫させる（途中で変えない）。
-・あなたはお客様なので、自分の希望額や他店の提示額は具体的に言ってよい。ただし最終的な査定額を出すのは店員なので、自分から査定額を確定しない。`;
+・あなたはお客様なので、自分の希望額や他店の提示額は具体的に言ってよい。ただし最終的な査定額を出すのは店員なので、自分から査定額を確定しない。
+・【最重要】あなたは終始「お客様」です。店員・鑑定士の役を絶対に演じない。査定・お預かり・価格提示・買取条件の説明や「当店」「させていただきます」「お預かりします」等の店側のセリフを絶対に言わない。
+・店員の発言が曖昧・不十分・テスト的（「適当に喋って」「こんにちは」だけ等）でも、店員役を代行しない。お客様として自然に反応し、必要なら「で、これいくらくらいになりそうですか？」のように客として尋ねる・促すだけにする。
+■ 自然な会話のための追加ルール
+・毎回同じ言い回しを避け、実在の人物のように言葉を選ぶ。相づち・軽い言い淀み・感情の起伏を自然に混ぜる。
+・店員が直前に言ったことに具体的に反応する（一般的な相づちで流さない）。これまでの会話の流れと矛盾しない一貫した反応をする。
+・棒読みや説明口調にならず、話し言葉で簡潔に（2〜3文）。設定した年齢・性格・状況がにじむ話し方にする。
+・不自然に物分かりが良すぎない。納得できない点は引っかかり、良い説明には素直に反応する。`;
 
 /* ---------------- roleplay ---------------- */
 let convo=[], currentScn=null, recog=null, listening=false, wantStop=false, sttBuffer='', committed='', curFinal='';
@@ -349,7 +346,7 @@ async function startRP(){
   try{
     const greet='いらっしゃいませ！';
     addMsg('user',greet); convo.push({role:'user',content:greet});
-    const text=await callClaude(sysPrompt()+'\n\n'+CONV_GUIDE,convo,900);
+    const text=await callClaude(sysPrompt()+'\n\n'+CONV_GUIDE,convo,1024);
     convo.push({role:'assistant',content:text});
     showAI(text);
     setInputs(true); document.getElementById('rpEval').disabled=false;
@@ -367,7 +364,7 @@ async function sendUser(text){
   addMsg('user',text); convo.push({role:'user',content:text});
   setInputs(false); setStatus('お客様が考えています…');
   try{
-    const reply=await callClaude(sysPrompt()+'\n\n'+CONV_GUIDE,convo,900);
+    const reply=await callClaude(sysPrompt()+'\n\n'+CONV_GUIDE,convo,1024);
     convo.push({role:'assistant',content:reply});
     showAI(reply); setInputs(true);
   }catch(e){setStatus('⚠ '+e.message);setInputs(true);}
@@ -458,14 +455,24 @@ document.getElementById('rpEval').onclick=async()=>{
     convo.push({role:'user',content:'ロープレを終了します'});
     const out=await callClaude(sysPrompt()+'\n\n'+EVAL_GUIDE,convo,2200);
     convo.push({role:'assistant',content:out});
-    const m=out.match(/総合点数[^0-9]{0,6}([0-9]{1,3})/);
-    const total=m?Math.min(100,parseInt(m[1])):0;
     setStatus('レーダーチャートを作成しています…');
     let radar=[]; try{radar=await scoreRadarFrom(evalConvo);}catch(err){radar=[];}
+    // 総合点：レーダーの項目点（達成度×配点）から算出。失敗時のみ本文の「総合点数」を使用
+    let total=0;
+    const _rub=(currentScn.rubric||[]).filter(c=>c&&c.t);
+    const _maxs=_rub.map(c=>{const mm=(c.t||'').match(/（\s*(\d+)\s*点\s*）/)||(c.t||'').match(/\(\s*(\d+)\s*点\s*\)/);return mm?parseInt(mm[1]):null;});
+    const _sumMax=_maxs.reduce((a,b)=>a+(b||0),0);
+    if(radar.length&&_maxs.every(x=>x!=null)&&_sumMax>0){
+      let _sum=0; radar.forEach((r,i)=>{_sum+=((r.score||0)/100)*(_maxs[i]||0);});
+      total=Math.round(_sum*100/_sumMax);
+    }else if(radar.length){
+      total=Math.round(radar.reduce((a,r)=>a+(r.score||0),0)/radar.length);
+    }else{
+      const m=out.match(/総合点数[^0-9]{0,6}([0-9]{1,3})/); total=m?Math.min(100,parseInt(m[1])):0;
+    }
     const rec={id:'r'+Date.now(),date:new Date().toISOString(),learner,scenarioId:currentScn.id,scenarioTitle:currentScn.title,
       total,summary:out,radar,turns:evalConvo.filter(x=>x.role==='user'&&x.content!=='いらっしゃいませ！').length};
     const all=DB.res; all.unshift(rec); DB.res=all;
-    if(REC.on) gasCall('log',{rec}).catch(err=>console.warn('サーバー保存に失敗:',err.message));
     addMsg('assistant',out,'evalmsg');
     setStatus('✓ 採点が完了しました。「管理ダッシュボード」でも確認できます。');
     openResult(rec);
@@ -545,26 +552,8 @@ window.saveScn=id=>{
 };
 
 /* ---------------- dashboard ---------------- */
-let SERVER_RES=null;
-function allRes(){
-  if(!SERVER_RES) return DB.res;
-  const seen=new Set(SERVER_RES.map(r=>r.id));
-  return SERVER_RES.concat(DB.res.filter(r=>!seen.has(r.id))).sort((a,b)=>new Date(b.date)-new Date(a.date));
-}
-async function syncDash(){
-  const msg=document.getElementById('syncMsg'), btn=document.getElementById('syncBtn');
-  if(!REC.on){openKey();return;}
-  btn.disabled=true; msg.textContent='サーバーから取得中…';
-  try{
-    const j=await gasCall('list',{limit:1000});
-    SERVER_RES=j.rows||[];
-    msg.textContent='✓ 全員分 '+SERVER_RES.length+'件を表示中（'+new Date().toLocaleTimeString('ja-JP')+' 時点）';
-    renderDash();
-  }catch(e){ msg.innerHTML='<b style="color:#c00">取得に失敗：'+esc(e.message)+'</b>'; }
-  finally{ btn.disabled=false; }
-}
 function renderDash(){
-  const all=allRes();
+  const all=DB.res;
   const sel=document.getElementById('dashFilter');
   const cur=sel?(sel.value||''):'';
   if(sel){const ls=[...new Set(all.map(r=>r.learner))];sel.innerHTML='<option value="">全員（'+all.length+'件）</option>'+ls.map(l=>`<option value="${esc(l)}">${esc(l)}（${all.filter(r=>r.learner===l).length}件）</option>`).join('');sel.value=cur;}
@@ -585,7 +574,7 @@ function renderDash(){
       <td><button class="ghost" onclick='openResultById("${r.id}")'>詳細</button></td></tr>`;
   }).join(''):`<tr><td colspan="6" class="muted" style="text-align:center;padding:30px">まだ実施記録がありません。</td></tr>`;
 }
-window.openResultById=id=>openResult(allRes().find(r=>r.id===id));
+window.openResultById=id=>openResult(DB.res.find(r=>r.id===id));
 function openResult(r){
   const j=r.total>=80?'優秀':r.total>=60?'良好':'要改善', cls=r.total>=80?'g':r.total>=60?'m':'b';
   const hasRadar=r.radar&&r.radar.length&&typeof Chart!=='undefined';
@@ -621,7 +610,7 @@ function randomScenario(){
 /* ---------------- CSV export ---------------- */
 function exportCSV(){
   const f=(document.getElementById('dashFilter')||{}).value||'';
-  let res=allRes(); if(f)res=res.filter(r=>r.learner===f);
+  let res=DB.res; if(f)res=res.filter(r=>r.learner===f);
   if(!res.length){alert('出力するデータがありません。');return;}
   const head=['実施日時','受講者','シチュエーション','総合点数','判定','往復数','評価全文'];
   const rows=res.map(r=>[
@@ -647,7 +636,7 @@ async function scoreRadarFrom(conv){
   if(!rub.length)return [];
   const items=rub.map(c=>cleanLabel(c.t));
   const transcript=conv.filter(m=>m.content!=='いらっしゃいませ！'&&m.content!=='ロープレを終了します').map(m=>(m.role==='assistant'?'お客様':'店員')+'：'+m.content).join('\n');
-  const sys='あなたは買取専門店エコリングの接客評価者です。次の会話について、各評価項目の達成度を0〜100の整数で採点してください。必ず次のJSONのみを出力し、前後に文章を付けないこと：{"scores":[{"name":"項目名","score":整数}]}\n評価項目：'+items.join(' / ');
+  const sys='あなたは買取専門店エコリングの厳しい接客評価者です。次の会話について、各評価項目の達成度を0〜100の整数で厳しく採点してください。接客行動が会話に明確に表れている場合のみ高得点とし、未実施・曖昧・テスト的な発言・挨拶のみ・極端に短い場合は0〜20点にすること。甘い評価はしない。必ず次のJSONのみを出力し前後に文章を付けないこと：{"scores":[{"name":"項目名","score":整数}]}\n評価項目：'+items.join(' / ');
   let out=await callClaude(sys,[{role:'user',content:transcript}],700);
   out=out.replace(/```json|```/g,'').trim();
   const j=JSON.parse(out);
@@ -733,26 +722,19 @@ function openKey(){
       <option value="anthropic">Anthropic Claude（無料$5クレジット）</option>
     </select>
     <div id="keyFields"></div>
-    <hr style="border:none;border-top:1px solid #e5e7eb;margin:16px 0">
-    <label>記録の共有（合言葉）<span class="muted">／ 未入力なら記録はこの端末内だけに保存されます</span></label>
-    <div class="row"><input id="m_recpass" type="password" placeholder="社内で共有された合言葉" style="flex:1"><button class="ghost" id="m_testBtn" onclick="testRec()" style="flex:none">接続テスト</button></div>
-    <p class="muted" id="m_recMsg" style="margin:6px 0 0"></p>
-    <p class="muted" style="margin-top:6px">入力すると、評価結果が会社の集計シートにも自動で保存され、ダッシュボードで全員分を見られます。<br>
-    ※ここで入力するのは合言葉だけです。APIキーがサーバーに送られることはありません。</p>
     <p class="muted" style="margin-top:10px">※ 音声はブラウザ標準機能（無料）を使用します。本番では ElevenLabs / VOICEVOX 等への差し替えが可能です。</p>
     <div class="row" style="justify-content:flex-end;margin-top:16px">
       <button class="ghost" onclick="closeModal('keyModal')">キャンセル</button>
       <button class="primary" onclick="saveKey()">保存</button>
     </div>`;
   document.getElementById('m_provider').value=DB.provider;
-  document.getElementById('m_recpass').value=REC.pass;
   renderKeyFields();
   show('keyModal');
 }
 window.renderKeyFields=()=>{
   const p=document.getElementById('m_provider').value;
   const models=p==='gemini'
-    ?[['gemini-2.5-flash','gemini-2.5-flash（無料枠・推奨）'],['gemini-2.5-flash-lite','gemini-2.5-flash-lite（無料枠・最速）']]
+    ?[['gemini-2.5-pro','gemini-2.5-pro（高精度・やや有料）'],['gemini-2.5-flash','gemini-2.5-flash（無料枠・推奨）'],['gemini-2.5-flash-lite','gemini-2.5-flash-lite（無料枠・最速）']]
     :[['claude-sonnet-4-6','claude-sonnet-4-6（バランス）'],['claude-haiku-4-5-20251001','claude-haiku-4-5（低コスト）'],['claude-opus-4-8','claude-opus-4-8（最高品質）']];
   const help=p==='gemini'
     ?'無料キーは <b>aistudio.google.com/apikey</b> で取得。カード不要・1日1,500回まで無料。※無料枠は入力内容が学習に使われるため、架空のロープレ用データでご利用ください。'
@@ -763,19 +745,9 @@ window.renderKeyFields=()=>{
     <p class="muted" style="margin-top:10px">${help}</p>`;
   document.getElementById('m_model').value=DB.model(p);
 };
-window.testRec=async()=>{
-  const msg=document.getElementById('m_recMsg'), btn=document.getElementById('m_testBtn');
-  const v=document.getElementById('m_recpass').value.trim();
-  if(!v){msg.innerHTML='<b style="color:#c00">合言葉を入力してください。</b>';return;}
-  const bak=REC.pass; REC.pass=v; btn.disabled=true; msg.textContent='確認中…';
-  try{ await gasCall('ping',{}); msg.innerHTML='<b style="color:#0a0">✓ 記録サーバーに接続できました。</b>'; }
-  catch(e){ REC.pass=bak; msg.innerHTML='<b style="color:#c00">'+esc(e.message)+'</b>'; }
-  finally{ btn.disabled=false; }
-};
 window.saveKey=()=>{
   const p=document.getElementById('m_provider').value;
   DB.provider=p; DB.setKey(p,document.getElementById('m_key').value.trim()); DB.setModel(p,document.getElementById('m_model').value);
-  REC.pass=document.getElementById('m_recpass').value.trim();
   closeModal('keyModal'); updateKeyBtn();
 };
 document.getElementById('keyBtn').onclick=openKey;
@@ -799,7 +771,6 @@ document.getElementById('randBtn').onclick=randomScenario;
 document.getElementById('genBtn').onclick=()=>document.getElementById('genFile').click();
 document.getElementById('genFile').onchange=e=>{const f=e.target.files[0];if(f)genFromMedia(f);};
 document.getElementById('csvBtn').onclick=exportCSV;
-document.getElementById('syncBtn').onclick=syncDash;
 document.getElementById('dashFilter').onchange=renderDash;
 function renameLbl(t){t=String(t||'');if(t.indexOf('査定説明（納得感）')<0)t=t.replace('査定説明（','査定説明（納得感）（');if(t.indexOf('メリットの情報提供')<0)t=t.replace('高く売るコツ（','メリットの情報提供（');return t;}
 (function migRubric(){
