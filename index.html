@@ -201,6 +201,24 @@ const APP_PASSWORD = "ecoring2026";
   document.getElementById('authPw').addEventListener('keydown',function(e){if(e.key==='Enter')ok();});
   setTimeout(function(){var p=document.getElementById('authPw');if(p)p.focus();},100);
 })();
+
+/* === 全PCのデータ集約（Googleフォーム送信） ===
+   フォームを作ったら、formResponseのURLと各項目のentry番号を下に入れてください。
+   url を空のままにすると、送信は無効（各PC内保存のみ）になります。 */
+const FORM_CONFIG={
+  url:"https://docs.google.com/forms/d/e/1FAIpQLScXEgBt7NAXXD07k0DIanbxQcvK5UKy4MnpkrXD1Y67lbQdRA/formResponse",
+  fields:{ date:"entry.1325628492", learner:"entry.2013829666", scenario:"entry.169263638", total:"entry.1040218761", judge:"entry.693584262", turns:"entry.1084257463", summary:"entry.1739491063" }
+};
+async function submitToForm(rec){
+  try{
+    if(!FORM_CONFIG||!FORM_CONFIG.url) return;
+    const f=FORM_CONFIG.fields||{}, fd=new FormData();
+    const jt=rec.total>=80?'優秀':(rec.total>=60?'良好':'要改善');
+    const map={date:new Date(rec.date).toLocaleString('ja-JP'),learner:rec.learner,scenario:rec.scenarioTitle,total:rec.total,judge:jt,turns:rec.turns,summary:rec.summary};
+    Object.keys(map).forEach(k=>{ if(f[k]) fd.append(f[k], map[k]); });
+    await fetch(FORM_CONFIG.url,{method:'POST',mode:'no-cors',body:fd});
+  }catch(e){}
+}
 function codeKey(p){p=p||DB.provider;return (p==='gemini'?GEMINI_API_KEY:ANTHROPIC_API_KEY)||'';}
 function hasKey(){return !!(codeKey()||DB.key());}
 const DEFAULT_RUBRIC=[{"t": "査定説明（納得感）（25点）", "d": "価格の根拠を相場・状態・需要の観点で論理的に説明したか／商品の傷みが中古市場でどう評価されるかをプロとして伝えたか／感情的な訴えだけでなく、客観的な根拠があったか"}, {"t": "メリットの情報提供（20点）", "d": "そのブランドに合ったケア・保管法・次回持ち込み時のコツを伝えたか／「またあの店員に相談したい」と思わせる専門情報があったか"}, {"t": "お役立ち姿勢（20点）", "d": "「大切にされてきたバッグですね」など、物への敬意・寄り添いがあったか／一方的な説明でなく、お客様の反応を見ながら会話できていたか"}, {"t": "販促物活用（15点）", "d": "店頭チラシや現在のキャンペーンを自然に案内できたか／宅配・出張買取は店頭案内完了後の補足にとどめること"}, {"t": "次回アプローチ（20点）", "d": "アプリ案内に限らず、この会話の流れやお客様の状況に合った形で次回来店につながる行動ができたか／加点対象の例：具体的な金額メリットとセットでアプリを自然に案内した／「次回はこういうものをぜひ持ってきてください」と提案した／お客様に合ったサービスやキャンペーンを紹介して来店動機を作った／以下は加点しない：一方的・義務的にアプリを押し込んだだけ／お客様の反応を無視して案内し続けた／定型文で終わった"}];
@@ -293,7 +311,7 @@ const CONV_GUIDE=`■ お客様の話し方ルール（厳守）
 ・不自然に物分かりが良すぎない。納得できない点は引っかかり、良い説明には素直に反応する。`;
 
 /* ---------------- roleplay ---------------- */
-let convo=[], currentScn=null, recog=null, listening=false, wantStop=false, sttBuffer='', committed='', curFinal='';
+let convo=[], currentScn=null, recog=null, listening=false, wantStop=false, sttBuffer='', committed='', curFinal='', silenceTimer=null;
 const SECURE=(location.protocol!=='file:');
 function sysPrompt(){return STT_GUIDE+'\n\n'+currentScn.prompt;}
 
@@ -360,7 +378,8 @@ function showAI(text){
 }
 async function sendUser(text){
   if(!text.trim())return;
-  committed=''; curFinal='';
+  committed=''; curFinal=''; clearTimeout(silenceTimer);
+  const _ti=document.getElementById('textInput'); if(_ti)_ti.value='';
   addMsg('user',text); convo.push({role:'user',content:text});
   setInputs(false); setStatus('お客様が考えています…');
   try{
@@ -370,11 +389,15 @@ async function sendUser(text){
   }catch(e){setStatus('⚠ '+e.message);setInputs(true);}
 }
 document.getElementById('rpStart').onclick=startRP;
-document.getElementById('sendBtn').onclick=()=>{const i=document.getElementById('textInput');sendUser(i.value);i.value='';};
+document.getElementById('sendBtn').onclick=()=>{
+  if(listening){ wantStop=true; try{recog&&recog.stop();}catch(e){} return; }
+  const i=document.getElementById('textInput'); const v=i.value; i.value=''; sendUser(v);
+};
 document.getElementById('textInput').onkeydown=e=>{if(e.key==='Enter'){document.getElementById('sendBtn').click();}};
 
 /* ---------------- speech ---------------- */
 const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
+function armSilence(){ clearTimeout(silenceTimer); silenceTimer=setTimeout(function(){ if(listening&&(committed+curFinal).trim()){ wantStop=true; setStatus('送信します…'); try{recog&&recog.stop();}catch(e){} } },2200); }
 function getRecog(){
   if(recog) return recog;
   if(!SR) return null;
@@ -394,8 +417,8 @@ function getRecog(){
   recog.onend=()=>{
     if(wantStop){
       listening=false; wantStop=false; document.getElementById('micBtn').classList.remove('rec');
-      const txt=(committed+curFinal).trim(); committed=''; curFinal='';
-      if(txt){ sendUser(txt); }
+      const txt=(committed+curFinal).trim(); committed=''; curFinal=''; clearTimeout(silenceTimer);
+      if(txt){ sendUser(txt); } else { document.getElementById('textInput').value=''; }
     } else if(listening){
       committed+=curFinal; curFinal='';
       if(SECURE){ try{recog.start();}catch(e){} }
@@ -410,7 +433,7 @@ document.getElementById('micBtn').onclick=()=>{
   if(!listening){
     listening=true; wantStop=false; curFinal='';
     document.getElementById('micBtn').classList.add('rec');
-    setStatus(SECURE?'🎤 お話しください。話し終えたら、もう一度🎤を押すと送信します。':'🎤 お話しください。区切りで一時停止したら🎤で再開、送信は「送信」ボタンです。');
+    setStatus('🎤 お話しください。話し終えたら、もう一度🎤か「送信」ボタンで送信します（自動送信はしません）。');
     try{r.start();}catch(e){}
   } else {
     wantStop=true; setStatus('送信します…');
@@ -473,6 +496,7 @@ document.getElementById('rpEval').onclick=async()=>{
     const rec={id:'r'+Date.now(),date:new Date().toISOString(),learner,scenarioId:currentScn.id,scenarioTitle:currentScn.title,
       total,summary:out,radar,turns:evalConvo.filter(x=>x.role==='user'&&x.content!=='いらっしゃいませ！').length};
     const all=DB.res; all.unshift(rec); DB.res=all;
+    submitToForm(rec);
     addMsg('assistant',out,'evalmsg');
     setStatus('✓ 採点が完了しました。「管理ダッシュボード」でも確認できます。');
     openResult(rec);
